@@ -7,7 +7,7 @@ AGENDA_URL = "https://pelotalibrestv.org/agenda.html"
 
 def obtener_html():
     headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(AGENDA_URL, headers=headers)
+    r = requests.get(AGENDA_URL, headers=headers, timeout=15)
     r.raise_for_status()
     return r.text
 
@@ -43,9 +43,9 @@ def scrapear_partidos():
             url_evento = decodificar_base64(href)
 
             resultados.append({
-                "partido": texto,
+                "partido": texto.strip(),
                 "hora": hora,
-                "canal": canal,
+                "canal": canal.strip(),
                 "url_evento": url_evento
             })
 
