@@ -1,65 +1,56 @@
-import json
 import requests
 from bs4 import BeautifulSoup
+import base64
+
+BASE_URL = "https://pelotalibrestv.org/agenda.html"
 
 
-class CanalManager:
-    def __init__(self, json_path="canales.json"):
-        self.json_path = json_path
-        self.canales = self.cargar_canales()
+def obtener_html():
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    r = requests.get(BASE_URL, headers=headers)
+    r.raise_for_status()
+    return r.text
 
-    def cargar_canales(self):
-        try:
-            with open(self.json_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            print("Error cargando JSON:", e)
-            return []
 
-    def buscar_canal_local(self, nombre_canal):
-        for canal in self.canales:
-            if nombre_canal.lower() in canal["nombre"].lower():
-                return canal["url"]
+def decodificar_base64_url(href):
+    if "r=" not in href:
         return None
+    encoded = href.split("r=")[1]
+    decoded = base64.b64decode(encoded).decode("utf-8")
+    return decoded
 
 
-class ScrapManager:
-    def __init__(self):
-        self.headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
+def scrapear_partidos():
+    html = obtener_html()
+    soup = BeautifulSoup(html, "html.parser")
 
-    def scrapear_canal(self, url_partido):
-        try:
-            response = requests.get(url_partido, headers=self.headers)
-            soup = BeautifulSoup(response.text, "html.parser")
+    resultados = []
 
-            # ⚠️ Esto después lo ajustamos según la web real
-            enlaces = soup.find_all("a")
+    bloques = soup.find_all("a")
 
-            for a in enlaces:
-                href = a.get("href")
-                if href and ".m3u8" in href:
-                    return href
+    for i in range(len(bloques) - 1):
 
-            return None
+        texto = bloques[i].get_text(strip=True)
 
-        except Exception as e:
-            print("Error en scraping:", e)
-            return None
+        if ":" in texto and "vs" in texto.lower():
 
+            partido = texto
+            hora = bloques[i].find("span", class_="t")
+            hora = hora.text if hora else None
 
-def obtener_link_final(nombre_canal, url_partido):
-    canal_manager = CanalManager()
-    scrap_manager = ScrapManager()
+            siguiente = bloques[i + 1]
+            canal = siguiente.get_text(strip=True)
 
-    # 1️⃣ Primero busco en mi JSON
-    link_local = canal_manager.buscar_canal_local(nombre_canal)
+            href = siguiente.get("href")
+            url_evento = decodificar_base64_url(href) if href else None
 
-    if link_local:
-        print("Canal encontrado en JSON")
-        return link_local
+            resultados.append({
+                "partido": partido,
+                "hora": hora,
+                "canal": canal,
+                "url_evento": url_evento
+            })
 
-    # 2️⃣ Si no está → hago scraping
-    print("Canal NO encontrado, haciendo scraping...")
-    return scrap_manager.scrapear_canal(url_partido)
+    return resultados
