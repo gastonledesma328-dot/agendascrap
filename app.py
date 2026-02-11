@@ -1,9 +1,42 @@
+import unicodedata
 from flask import Flask, request, jsonify
 from scraper import scrapear_partidos
 from resolver import buscar_canal_propio
 
 app = Flask(__name__)
 
+
+# ===============================
+# NORMALIZACIÓN FUERTE
+# ===============================
+
+def normalizar_texto(texto):
+    texto = texto.lower()
+    texto = unicodedata.normalize("NFD", texto)
+    texto = texto.encode("ascii", "ignore").decode("utf-8")
+    texto = texto.replace("vs", "")
+    texto = texto.replace(":", "")
+    texto = texto.replace("-", " ")
+    texto = texto.replace(".", "")
+    return texto
+
+
+def coincide_busqueda(query, partido_texto):
+    query = normalizar_texto(query)
+    partido_texto = normalizar_texto(partido_texto)
+
+    palabras_query = query.split()
+    palabras_partido = partido_texto.split()
+
+    coincidencias = sum(1 for p in palabras_query if p in palabras_partido)
+
+    # Coincidencia flexible: al menos la mitad de las palabras
+    return coincidencias >= max(1, len(palabras_query) // 2)
+
+
+# ===============================
+# ENDPOINTS
+# ===============================
 
 @app.route("/")
 def home():
@@ -18,10 +51,14 @@ def resolver():
     if not nombre_partido:
         return jsonify({"error": "Falta parámetro 'partido'"}), 400
 
-    partidos = scrapear_partidos()
+    try:
+        partidos = scrapear_partidos()
+    except Exception as e:
+        return jsonify({"error": "Error al scrapear agenda", "detalle": str(e)}), 500
 
     for p in partidos:
-        if nombre_partido.lower() in p["partido"].lower():
+
+        if coincide_busqueda(nombre_partido, p["partido"]):
 
             stream_propio = buscar_canal_propio(p["canal"])
 
@@ -30,7 +67,8 @@ def resolver():
                     "tipo": "canal_propio",
                     "url": stream_propio,
                     "partido": p["partido"],
-                    "canal": p["canal"]
+                    "canal": p["canal"],
+                    "hora": p["hora"]
                 })
 
             else:
@@ -38,10 +76,25 @@ def resolver():
                     "tipo": "redireccion_externa",
                     "url": p["url_evento"],
                     "partido": p["partido"],
-                    "canal": p["canal"]
+                    "canal": p["canal"],
+                    "hora": p["hora"]
                 })
 
     return jsonify({"error": "Partido no encontrado"}), 404
+
+
+# ===============================
+# DEBUG
+# ===============================
+
+@app.route("/debug")
+def debug():
+    return jsonify(scrapear_partidos())
+
+
+@app.route("/partidos")
+def partidos():
+    return jsonify(scrapear_partidos())
 
 
 if __name__ == "__main__":
