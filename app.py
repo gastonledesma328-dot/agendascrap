@@ -1,80 +1,70 @@
+import requests
+from bs4 import BeautifulSoup
+import base64
 import unicodedata
-from flask import Flask, request, jsonify
-from scraper import scrapear_partidos
-from resolver import buscar_canal_propio
+import re
 
-app = Flask(__name__)
+AGENDA_URL = "https://pelotalibrestv.org/agenda.html"
 
 
-def normalizar_texto(texto):
+def normalizar(texto):
     texto = texto.lower()
     texto = unicodedata.normalize("NFD", texto)
     texto = texto.encode("ascii", "ignore").decode("utf-8")
-    texto = texto.replace("vs", "")
-    texto = texto.replace(":", "")
-    texto = texto.replace("-", " ")
-    texto = texto.replace(".", "")
     return texto
 
 
-def coincide_busqueda(query, partido_texto):
-    query = normalizar_texto(query)
-    partido_texto = normalizar_texto(partido_texto)
-
-    palabras_query = query.split()
-    palabras_partido = partido_texto.split()
-
-    coincidencias = sum(1 for p in palabras_query if p in palabras_partido)
-
-    return coincidencias >= max(1, len(palabras_query) // 2)
+def obtener_html():
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(AGENDA_URL, headers=headers, timeout=15)
+    r.raise_for_status()
+    return r.text
 
 
-@app.route("/")
-def home():
-    return "Agenda Scrap API activa"
+def decodificar_base64(href):
+    if not href or "r=" not in href:
+        return None
+    try:
+        encoded = href.split("r=")[1]
+        return base64.b64decode(encoded).decode("utf-8")
+    except:
+        return None
 
 
-@app.route("/resolver")
-def resolver():
-
-    nombre_partido = request.args.get("partido")
-
-    if not nombre_partido:
-        return jsonify({"error": "Falta parámetro 'partido'"}), 400
-
-    partidos = scrapear_partidos()
-
-    for p in partidos:
-
-        if coincide_busqueda(nombre_partido, p["partido"]):
-
-            stream_propio = buscar_canal_propio(p["canal"])
-
-            if stream_propio:
-                return jsonify({
-                    "tipo": "canal_propio",
-                    "url": stream_propio,
-                    "partido": p["partido"],
-                    "canal": p["canal"],
-                    "hora": p["hora"]
-                })
-
-            else:
-                return jsonify({
-                    "tipo": "redireccion_externa",
-                    "url": p["url_evento"],
-                    "partido": p["partido"],
-                    "canal": p["canal"],
-                    "hora": p["hora"]
-                })
-
-    return jsonify({"error": "Partido no encontrado"}), 404
+def es_partido(texto):
+    texto = normalizar(texto)
+    # Detecta "vs", "-", "—", " v "
+    return bool(re.search(r"\bvs\b|\bv\b| - | — ", texto))
 
 
-@app.route("/debug")
-def debug():
-    return jsonify(scrapear_partidos())
+def scrapear_partidos():
+    html = obtener_html()
+    soup = BeautifulSoup(html, "html.parser")
 
+    resultados = []
+    enlaces = soup.find_all("a")
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    for i in range(len(enlaces) - 1):
+
+        texto = enlaces[i].get_text(" ", strip=True)
+
+        if not es_partido(texto):
+            continue
+
+        hora_tag = enlaces[i].find("span", class_="t")
+        hora = hora_tag.text.strip() if hora_tag else None
+
+        siguiente = enlaces[i + 1]
+        canal = siguiente.get_text(" ", strip=True)
+        href = siguiente.get("href")
+
+        url_evento = decodificar_base64(href)
+
+        resultados.append({
+            "partido": texto.strip(),
+            "hora": hora,
+            "canal": canal.strip(),
+            "url_evento": url_evento
+        })
+
+    return resultados
