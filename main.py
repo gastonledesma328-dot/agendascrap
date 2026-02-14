@@ -1,36 +1,30 @@
+from flask import Flask, request, jsonify
 from scraper import scrapear_partidos
-from resolver import buscar_canal_propio
+
+app = Flask(__name__)
 
 
-def resolver_partido(nombre_partido):
+@app.route("/")
+def home():
+    return "Agenda Scrap API activa"
 
+
+@app.route("/debug")
+def debug():
+    return jsonify(scrapear_partidos())
+
+
+@app.route("/resolver")
+def resolver():
+    partido = request.args.get("partido")
+    if not partido:
+        return jsonify({"error": "Falta parámetro partido"}), 400
+
+    partido = partido.lower()
     partidos = scrapear_partidos()
 
     for p in partidos:
-        if nombre_partido.lower() in p["partido"].lower():
+        if partido in p["partido"].lower():
+            return jsonify(p)
 
-            stream_propio = buscar_canal_propio(p["canal"])
-
-            if stream_propio:
-                return {
-                    "tipo": "canal_propio",
-                    "url": stream_propio
-                }
-            else:
-                return {
-                    "tipo": "redireccion_externa",
-                    "url": p["url_evento"]
-                }
-
-    return None
-
-
-if __name__ == "__main__":
-
-    resultado = resolver_partido("América vs Olimpia")
-
-    if resultado:
-        print("Destino:")
-        print(resultado)
-    else:
-        print("Partido no encontrado")
+    return jsonify({"error": "Partido no encontrado"}), 404
