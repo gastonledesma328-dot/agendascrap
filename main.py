@@ -1,114 +1,66 @@
 import requests
 import unicodedata
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify
+from datetime import datetime
 
 app = Flask(__name__)
 
-AGENDA_API = "https://agenda-futbol.onrender.com/agenda"
-CANALES_URL = "https://raw.githubusercontent.com/gastonledesma328-dot/agendascrap/refs/heads/main/canales%20(8).json"
+STREAMTP10_JSON = "https://streamtp10.com/eventos.json"
+CANALES_URL = "https://raw.githubusercontent.com/gastonledesma328-dot/agendascrap/main/canales%20(8).json"
 
-
-# =========================
-# UTILIDADES
-# =========================
 
 def normalizar(texto):
+    if not texto:
+        return ""
     texto = texto.lower()
     texto = unicodedata.normalize("NFD", texto)
-    texto = texto.encode("ascii", "ignore").decode("utf-8")
-    texto = texto.replace("vs", "")
-    texto = texto.replace("-", " ")
-    texto = texto.replace(":", "")
-    return texto
+    return texto.encode("ascii", "ignore").decode("utf-8")
 
 
-def cargar_agenda():
-    r = requests.get(AGENDA_API, timeout=15)
+def cargar_json(url):
+    r = requests.get(url, timeout=15)
     r.raise_for_status()
     return r.json()
 
 
-def cargar_canales():
-    r = requests.get(CANALES_URL, timeout=15)
-    r.raise_for_status()
-    return r.json()
+@app.route("/agenda")
+def agenda():
+    eventos = cargar_json(STREAMTP10_JSON)
+    canales = cargar_json(CANALES_URL)
 
+    resultado = {}
 
-def buscar_canal_propio(nombre_canal):
-    canales = cargar_canales()
-    nombre_canal = normalizar(nombre_canal)
+    for ev in eventos.get("eventos", []):
+        titulo = ev.get("event-name") or ev.get("titulo") or ""
+        hora = ev.get("hora", "")
+        canal = ev.get("canal", "")
+        link_evento = ev.get("iframe") or ev.get("link") or ""
 
-    for c in canales:
-        if normalizar(c["name"]) in nombre_canal:
-            return c["streamUrl"]
+        link_final = link_evento
 
-    return None
+        for c in canales:
+            if normalizar(c["name"]) in normalizar(canal):
+                link_final = c["streamUrl"]
+                break
 
+        liga = ev.get("liga", "Eventos")
 
-def coincide_busqueda(query, partido):
-    q = normalizar(query).split()
-    p = normalizar(partido)
+        partido = {
+            "partido": titulo,
+            "hora": hora,
+            "canal": canal,
+            "link": link_final
+        }
 
-    return all(word in p for word in q)
+        resultado.setdefault(liga, []).append(partido)
 
+    return jsonify(resultado)
 
-# =========================
-# ENDPOINTS
-# =========================
 
 @app.route("/")
 def home():
-    return "Agenda Scrap API activa"
+    return "Agenda Tole API activa"
 
-
-@app.route("/debug")
-def debug():
-    """Devuelve la agenda completa"""
-    return jsonify(cargar_agenda())
-
-
-@app.route("/resolver")
-def resolver():
-    query = request.args.get("partido")
-
-    if not query:
-        return jsonify({"error": "Falta parámetro partido"}), 400
-
-    agenda = cargar_agenda()
-
-    for item in agenda:
-        partido = item.get("partido", "")
-        canal = item.get("canal", "")
-        hora = item.get("hora")
-        link = item.get("link")
-
-        if coincide_busqueda(query, partido):
-
-            canal_propio = buscar_canal_propio(canal)
-
-            if canal_propio:
-                return jsonify({
-                    "tipo": "canal_propio",
-                    "url": canal_propio,
-                    "partido": partido,
-                    "canal": canal,
-                    "hora": hora
-                })
-
-            return jsonify({
-                "tipo": "redireccion_externa",
-                "url": link,
-                "partido": partido,
-                "canal": canal,
-                "hora": hora
-            })
-
-    return jsonify({"error": "Partido no encontrado"}), 404
-
-
-# =========================
-# MAIN
-# =========================
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
